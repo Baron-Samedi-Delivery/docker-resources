@@ -1,0 +1,159 @@
+---
+version: '3.8'
+
+services:
+
+  swag:
+    image: lscr.io/linuxserver/swag #mirror at ghcr.io/linuxserver/swag
+    container_name: swag
+    cap_add:
+      - NET_ADMIN
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - TZ=ASIA/Tokyo
+      - URL= #DUCKDNS_URL
+      - SUBDOMAINS=wildcard
+      - VALIDATION=duckdns
+      - DUCKDNSTOKEN= #DUCKDNS_EMAIL
+      - EMAIL= #DUCKDNS_TOKEN
+#	   - STAGING=true
+    volumes:
+      - [/location/of/]:\Docker\swag\config:/config
+#	  - [/location/of/]:\Docker\swag\config:/swag-ssl
+    ports:
+      - 443:443
+      - 80:80 #optional
+    restart: unless-stopped
+    #depends_on:
+      #- "duckdns" #this is not necessary as swag can handle cert renewal
+    #secrets:
+      #- DUCKDNS_EMAIL
+      #- DUCKDNS_TOKEN
+
+  audiobookshelf:
+    image: ghcr.io/advplyr/audiobookshelf:latest
+    container_name: audiobookshelf
+    ports:
+      - 13378:80
+    volumes:
+      - [Folder path A]:/audiobooks
+      - [Folder path P]:/podcasts
+      - [Folder path D]\audiobookshelf\config:/config
+      - [Folder path D]\audiobookshelf\metadata:/metadata
+    environment:
+      - TZ=Asia/Tokyo
+    depends_on:
+      - "swag"
+    restart: unless-stopped
+
+  flaresolverr:
+    image: ghcr.io/flaresolverr/flaresolverr:latest # DockerHub mirror flaresolverr/flaresolverr:latest
+    container_name: flaresolverr
+    environment:
+      - LOG_LEVEL=${LOG_LEVEL:-info}
+      - LOG_HTML=${LOG_HTML:-false}
+      - CAPTCHA_SOLVER=${CAPTCHA_SOLVER:-none}
+      - TZ=ASIA/Tokyo
+    ports:
+      - "${PORT:-8191}:8191"
+    depends_on:
+      - "swag"
+    restart: unless-stopped
+
+  overseerr:
+    image: sctx/overseerr:latest
+    container_name: overseerr
+    environment:
+      - LOG_LEVEL=${LOG_LEVEL:-debug}
+      - TZ=ASIA/Tokyo
+      - PORT=5055
+    volumes:
+      - overseerr-data:/app/config
+    ports:
+      - 5055:5055
+    depends_on:
+      - "swag"
+      - "flaresolverr"
+    restart: unless-stopped
+
+  stirling-pdf:
+    image: frooodle/s-pdf:latest
+    container_name: stirling-pdf
+    ports:
+      - 8080:8080
+    volumes:
+      - /location/of/stirling-pdf/trainingData:/usr/share/tesseract-ocr/5/tessdata #Required for extra OCR languages
+      - /location/of/configs:/configs
+      #- /location/of/customFiles:/customFiles/
+      - /location/of/stirling-pdf/logs:/logs/
+    depends_on:
+      - "swag"
+    environment:
+      - DOCKER_ENABLE_SECURITY=false #change to true in order to start having logons and such
+      #- UI_APP_NAME=Stirling PDF
+      #- UI_HOME_DESCRIPTION=Your locally hosted one-stop-shop for all your PDF needs.
+      #- UI_APP_NAVBAR_NAME=Stirling PDF
+    restart: unless-stopped
+
+  mealie:
+    image: ghcr.io/mealie-recipes/mealie:v1.4.0 # Only update when clear about breaking changes.
+    container_name: mealie
+    restart: unless-stopped
+    ports:
+      - 9000:9000 # ports can be uneven ex: "9925:9000"
+    deploy:
+      resources:
+        limits:
+          memory: 750M # limit the memory or it will devour too much.
+    volumes:
+      - mealie-data:/app/data/
+    environment:
+      # Set Backend ENV Variables Here
+      - ALLOW_SIGNUP=true
+      - PUID=1000
+      - PGID=1000
+      - TZ=ASIA/Tokyo
+      - MAX_WORKERS=1
+      - WEB_CONCURRENCY=1
+      - BASE_URL= #DUCKDNS_URL_MEALIE
+      # Database Settings
+      - DB_ENGINE=postgres
+      - POSTGRES_USER=mealie
+      - POSTGRES_PASSWORD=mealie
+      - POSTGRES_SERVER=postgres
+      - POSTGRES_PORT=5432
+      - POSTGRES_DB=mealie
+    depends_on:
+      - "postgres" #:
+        #- condition: service_healthy
+
+  postgres:
+    container_name: postgres
+    image: postgres:15
+    restart: unless-stopped
+    volumes:
+      - mealie-pgdata:/var/lib/postgresql/data
+    environment:
+      - POSTGRES_PASSWORD=mealie
+      - POSTGRES_USER=mealie
+    healthcheck: #there are some syntax issues with dashes/hyphens for this check ("requires a mapping" means not a -list)
+      test: ["CMD", "pg_isready"]
+      interval: 30s
+      timeout: 20s
+      retries: 3
+
+#secrets: #can only use secrets like these in "docker swarm" mode
+  #my_secret:
+    #file: ./my_secret.txt
+  #my_other_secret:
+    #external: true
+  #DUCKDNS_EMAIL:
+    #file: "/location/of/DUCKDNS_EMAIL.txt"
+  #DUCKDNS_TOKEN:
+    #external: true
+
+volumes:
+  overseerr-data:
+  mealie-data:
+  mealie-pgdata:
